@@ -1,0 +1,44 @@
+name: solve
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "time budget per job (minutes)"
+        default: "13"
+  push:
+    paths: ["puzzle.cnf"]
+jobs:
+  kissat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: true
+      matrix:
+        job: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -q passagemath-kissat
+      - name: portfolio
+        id: s
+        run: |
+          K=$(python3 -c "import glob,sys,site;c=glob.glob(site.getusersitepackages()+'/sage_wheels/bin/kissat')+glob.glob(sys.prefix+'/lib/python3*/site-packages/sage_wheels/bin/kissat')+glob.glob('/opt/hostedtoolcache/**/sage_wheels/bin/kissat',recursive=True);print(c[0])")
+          M=${{ github.event.inputs.minutes || '13' }}
+          J=${{ matrix.job }}
+          OPTS=("" "--sat" "--target=2" "--phase=false" "--sat --phase=false" "--stable=2" "--sat --target=2" "--walkinitially=true")
+          for c in 0 1 2 3; do
+            S=$((J*4+c)); O=${OPTS[$((S%8))]}
+            (timeout $((M*60)) $K -q $O --seed=$((S*7919+1)) puzzle.cnf > out$c.txt; echo $? > rc$c.txt) &
+          done
+          while true; do
+            for c in 0 1 2 3; do
+              if [ -f rc$c.txt ] && [ "$(cat rc$c.txt)" = "10" ]; then cp out$c.txt solution.txt; pkill -f kissat || true; echo "found=1" >> $GITHUB_OUTPUT; exit 0; fi
+            done
+            n=$(ls rc*.txt 2>/dev/null | wc -l); [ "$n" = "4" ] && break
+            sleep 2
+          done
+          echo "found=0" >> $GITHUB_OUTPUT
+      - if: steps.s.outputs.found == '1'
+        uses: actions/upload-artifact@v4
+        with: { name: solution, path: solution.txt }
+      - if: steps.s.outputs.found == '1'
+        run: echo "SOLVED - cancelling others" && exit 1
